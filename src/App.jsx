@@ -18,7 +18,7 @@ const getBestImageUrl = (url) => {
       }
       
       if (fileId) {
-        return `https://lh3.googleusercontent.com/d/${fileId}`;
+        return `https://lh3.googleusercontent.com/d/$$$$${fileId}`;
       }
     }
     return cleanUrl;
@@ -35,11 +35,11 @@ function App() {
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [failedImages, setFailedImages] = useState({});
   const [faceBoxes, setFaceBoxes] = useState([]);
-  
+
   // Stream Selectors
   const [streamSourceType, setStreamSourceType] = useState("webcam"); 
   const [networkStreamUrl, setNetworkStreamUrl] = useState("");
-  
+
   // Registration Form Context Matrix
   const [regId, setRegId] = useState("");
   const [regName, setRegName] = useState("");
@@ -47,20 +47,20 @@ function App() {
   const [regStatus, setRegStatus] = useState("Lead");
   const [isRegistering, setIsRegistering] = useState(false);
   const [capturedBase64, setCapturedBase64] = useState("");
-  
+
   // CRM Fields Mutation Hooks
   const [isEditingId, setIsEditingId] = useState(null);
   const [editNeeds, setEditNeeds] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editFeedback, setEditFeedback] = useState(""); 
-  const [editGoodsPurchased, setEditGoodsPurchased] = useState(""); // Hooks for editable goods field
+  const [editGoodsPurchased, setEditGoodsPurchased] = useState("");
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [totalCustomersCount, setTotalCustomersCount] = useState(0);
 
   // VOICE RECOGNITION STATES
   const [isListening, setIsListening] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState("en-US"); 
+  const [selectedLanguage, setSelectedLanguage] = useState("en-US");
   const recognitionRef = useRef(null);
 
   // Hardware Ref Targets
@@ -68,6 +68,22 @@ function App() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const lastLoggedTimeRef = useRef({});
+
+  // HIGH-SPEED MUTABLE REFS ENGINE
+  const isEditingIdRef = useRef(null);
+  const editGoodsPurchasedRef = useRef("");
+  const editNeedsRef = useRef("");
+  const editThinkingRef = useRef("");
+  const editFeedbackRef = useRef("");
+  const selectedMatchIndexRef = useRef(0);
+
+  // Instantly reflect state changes into raw memory structures for loop safety
+  useEffect(() => { isEditingIdRef.current = isEditingId; }, [isEditingId]);
+  useEffect(() => { editGoodsPurchasedRef.current = editGoodsPurchased; }, [editGoodsPurchased]);
+  useEffect(() => { editNeedsRef.current = editNeeds; }, [editNeeds]);
+  useEffect(() => { editThinkingRef.current = editThinking; }, [editThinking]);
+  useEffect(() => { editFeedbackRef.current = editFeedback; }, [editFeedback]);
+  useEffect(() => { selectedMatchIndexRef.current = selectedMatchIndex; }, [selectedMatchIndex]);
 
   useEffect(() => {
     if (streamSourceType === "webcam") {
@@ -91,22 +107,35 @@ function App() {
     return () => clearInterval(interval);
   }, [appMode, streamSourceType, networkStreamUrl, isRecognizing, cameraActive]);
 
-  // INITIALIZE MULTI-LANGUAGE SPEECH ENGINE
+  // PROCESS VOICE SEGMENTS DIRECTLY VIA REFERENCE MATRIX
+  const processVoiceOrder = (speechText) => {
+    if (!speechText) return;
+    const cleanSpeech = speechText.trim();
+    
+    if (isEditingIdRef.current !== null) {
+      const existingText = editGoodsPurchasedRef.current;
+      const combinedText = existingText ? `${existingText}, ${cleanSpeech}` : cleanSpeech;
+      setEditGoodsPurchased(combinedText);
+      editGoodsPurchasedRef.current = combinedText; 
+    }
+  };
+
+  // INITIALIZE WEBSPEECH ENGINE AT STARTUP
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
-      recognition.continuous = false; 
-      recognition.interimResults = false; 
+      recognition.continuous = true;      
+      recognition.interimResults = true;  
       
       recognition.onstart = () => {
         setIsListening(true);
-        setStatusMessage("🎙️ Listening for orders (Speak product name and quantity)...");
+        setStatusMessage("🎙️ Voice Active: Speaking writes instantly.");
       };
 
       recognition.onerror = (event) => {
-        console.error("Speech Recognition Error:", event.error);
-        setStatusMessage(`Speech error encountered: ${event.error} ⚠️`);
+        console.error("Speech recognition framework log error:", event.error);
+        setStatusMessage(`Speech layer error: ${event.error} ⚠️`);
         setIsListening(false);
       };
 
@@ -115,60 +144,71 @@ function App() {
       };
 
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        processVoiceOrder(transcript);
+        let interimTranscript = "";
+        let finalTranscript = "";
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+
+        if (finalTranscript) {
+          processVoiceOrder(finalTranscript);
+        }
+
+        if (isEditingIdRef.current !== null) {
+          const baseText = editGoodsPurchasedRef.current;
+          if (interimTranscript) {
+            setEditGoodsPurchased(baseText ? `${baseText} ${interimTranscript}` : interimTranscript);
+          } else {
+            setEditGoodsPurchased(baseText);
+          }
+        }
       };
 
       recognitionRef.current = recognition;
     } else {
-      console.warn("Web Speech API is not fully supported in this browser wrapper.");
+      console.warn("Speech API platform framework layer not supported inside this client.");
     }
-  }, [selectedMatchIndex, isEditingId, editGoodsPurchased]);
 
-  // Sync speech engine native locales whenever selected language mutates
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []); 
+
   useEffect(() => {
     if (recognitionRef.current) {
       recognitionRef.current.lang = selectedLanguage;
     }
   }, [selectedLanguage]);
 
-  // PARSE MULTI-LANGUAGE TRANSLATION AND FORMAT STRING
-  const processVoiceOrder = (speechText) => {
-    if (!speechText) return;
-    const cleanSpeech = speechText.trim();
-    
-    // If user is currently editing, append directly into the active editing text field buffer state
-    if (isEditingId !== null) {
-      setEditGoodsPurchased(prev => (prev ? `${prev}, ${cleanSpeech}` : cleanSpeech));
-      setStatusMessage(`Added to active edit field: "${cleanSpeech}" 🛒`);
-      return;
-    }
-
-    // Otherwise update the main real-time tracking ledger matrix state
-    setIdentifiedMatches(prev => prev.map((match, idx) => {
-      if (idx === selectedMatchIndex && match.customer) {
-        const c = match.customer;
-        const existingGoods = c.goods_purchased || c["goods_purchased"] || "";
-        const updatedGoods = existingGoods ? `${existingGoods}, ${cleanSpeech}` : cleanSpeech;
-
-        setStatusMessage(`Added to customer card: "${cleanSpeech}" 🛒`);
-        return {
-          ...match,
-          customer: { ...c, goods_purchased: updatedGoods }
-        };
-      }
-      return match;
-    }));
-  };
-
-  const toggleVoiceListening = () => {
+  // COMBINED ENGINE: Activates Voice Capture & Automatically turns on Editable Mappings Simultaneously
+  const toggleVoiceListening = (activeCust) => {
     if (!recognitionRef.current) {
-      setStatusMessage("Speech API error: Browser environment not supported ❌");
+      setStatusMessage("Speech tracking hardware unavailable ❌");
       return;
     }
+
     if (isListening) {
       recognitionRef.current.stop();
     } else {
+      if (activeCust && isEditingId !== (activeCust.customer_id || activeCust["customer_id"])) {
+        const cId = activeCust.customer_id || activeCust["customer_id"];
+        setIsEditingId(cId);
+        setEditNeeds(activeCust.their_needs || activeCust["their_needs"] || "");
+        setEditThinking(activeCust.thinking_to_purchase || activeCust["thinking_to_purchase"] || "");
+        setEditFeedback(activeCust.feedback || activeCust["feedback"] || ""); 
+        setEditGoodsPurchased(activeCust.goods_purchased || activeCust["goods_purchased"] || ""); 
+        
+        isEditingIdRef.current = cId;
+        editGoodsPurchasedRef.current = activeCust.goods_purchased || activeCust["goods_purchased"] || "";
+      }
+      
       try {
         recognitionRef.current.start();
       } catch (err) {
@@ -216,6 +256,10 @@ function App() {
   };
 
   const handleResetUIHistory = () => {
+    // If resetting while someone was being edited, auto-save their data first
+    if (isEditingIdRef.current) {
+      autoCommitDataOnExit(isEditingIdRef.current);
+    }
     setIdentifiedMatches([]);
     setFaceBoxes([]);
     setSelectedMatchIndex(0);
@@ -269,8 +313,58 @@ function App() {
     }
   };
 
+  // BACKGROUND AUTO-COMMIT DETECTOR BLOCK
+  const autoCommitDataOnExit = async (customerId) => {
+    if (!customerId) return;
+    try {
+      console.log(`Auto-saving details for exited customer: ${customerId}`);
+      // Send reference variables directly to prevent grabbing empty states during unmounting/resets
+      await fetch(`${API_BASE_URL}/update_customer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: String(customerId),
+          their_needs: editNeedsRef.current.trim(),
+          thinking_to_purchase: editThinkingRef.current.trim(),
+          feedback: editFeedbackRef.current.trim(),
+          goods_purchased: editGoodsPurchasedRef.current.trim() 
+        }),
+      });
+      console.log("Exited customer records committed successfully.");
+    } catch (error) {
+      console.error("Auto commit failure:", error);
+    }
+  };
+
   const processServerMatches = (data, sourceWidth, sourceHeight) => {
+    // CRITICAL TRIGGER: If active user was being edited, but camera frame returns 0 matches, they left the camera.
+    if ((!data.matches || data.matches.length === 0) && isEditingIdRef.current) {
+      const exitedId = isEditingIdRef.current;
+      setIsEditingId(null);
+      isEditingIdRef.current = null;
+      if (recognitionRef.current && isListening) {
+        recognitionRef.current.stop();
+      }
+      autoCommitDataOnExit(exitedId);
+      setStatusMessage("🚶 Customer left camera view. Data auto-saved to cloud! ✅");
+    }
+
     if (data.matches && data.matches.length > 0) {
+      // Check if the specific user being edited has disappeared from the new array of matches
+      if (isEditingIdRef.current) {
+        const stillPresent = data.matches.some(m => m.identified && m.customer && (m.customer.customer_id || m.customer["customer_id"]) === isEditingIdRef.current);
+        if (!stillPresent) {
+          const exitedId = isEditingIdRef.current;
+          setIsEditingId(null);
+          isEditingIdRef.current = null;
+          if (recognitionRef.current && isListening) {
+            recognitionRef.current.stop();
+          }
+          autoCommitDataOnExit(exitedId);
+          setStatusMessage("🚶 Customer stepped out of frame. Changes auto-saved! ✅");
+        }
+      }
+
       const trackingBoxes = data.matches.map(match => {
         const box = match.box || { x: 150, y: 120, w: 300, h: 300 };
         return {
@@ -289,16 +383,17 @@ function App() {
           if (prev[idx] && prev[idx].customer && newMatch.customer) {
             const oldId = prev[idx].customer.customer_id || prev[idx].customer["customer_id"];
             const newId = newMatch.customer.customer_id || newMatch.customer["customer_id"];
+            
             if (oldId === newId) {
-              const isCurrentlyEditingThisUser = isEditingId === oldId;
+              const isCurrentlyEditingThisUser = isEditingIdRef.current === oldId;
               return {
                 ...newMatch,
                 customer: {
                   ...newMatch.customer,
-                  goods_purchased: isCurrentlyEditingThisUser ? editGoodsPurchased : prev[idx].customer.goods_purchased,
-                  their_needs: isCurrentlyEditingThisUser ? editNeeds : prev[idx].customer.their_needs,
-                  thinking_to_purchase: isCurrentlyEditingThisUser ? editThinking : prev[idx].customer.thinking_to_purchase,
-                  feedback: isCurrentlyEditingThisUser ? editFeedback : prev[idx].customer.feedback
+                  goods_purchased: isCurrentlyEditingThisUser ? editGoodsPurchasedRef.current : (newMatch.customer.goods_purchased || prev[idx].customer.goods_purchased),
+                  their_needs: isCurrentlyEditingThisUser ? editNeedsRef.current : (newMatch.customer.their_needs || prev[idx].customer.their_needs),
+                  thinking_to_purchase: isCurrentlyEditingThisUser ? editThinkingRef.current : (newMatch.customer.thinking_to_purchase || prev[idx].customer.thinking_to_purchase),
+                  feedback: isCurrentlyEditingThisUser ? editFeedbackRef.current : (newMatch.customer.feedback || prev[idx].customer.feedback)
                 }
               };
             }
@@ -307,7 +402,7 @@ function App() {
         });
       });
 
-      if (selectedMatchIndex >= data.matches.length) {
+      if (selectedMatchIndexRef.current >= data.matches.length) {
         setSelectedMatchIndex(0);
       }
 
@@ -401,10 +496,14 @@ function App() {
 
       const responseData = await response.json();
       if (responseData.error || responseData.success === false) {
-        throw new Error(responseData.message || responseData.error || "Backend server rejected transaction.");
+        throw new Error(responseData.message || responseData.error || "Backend database transaction failed.");
       }
 
-      setStatusMessage(`🎉 Profile Registered Successfully! ID: ${regId} Matrix Initialized!`);
+      if (responseData.acknowledged || responseData.status === "success") {
+        const metadata = responseData.data || {};
+        setStatusMessage(`🎉 Profile Registered Successfully! ID: ${metadata.customer_id || regId} • Database updated.`);
+      }
+
       setRegId("");
       setRegName("");
       setRegPhone("");
@@ -434,26 +533,26 @@ function App() {
       });
       if (!response.ok) throw new Error(`CRM Mutation Endpoint Error: ${response.status}`);
       
-      setIdentifiedMatches(prev => prev.map((m, idx) => {
-        if (idx === selectedMatchIndex && m.customer) {
+      setIdentifiedMatches(prev => prev.map(match => {
+        const c = match.customer;
+        if (c && (c.customer_id || c["customer_id"]) === customerId) {
           return {
-            ...m,
-            customer: {
-              ...m.customer,
-              their_needs: editNeeds,
-              thinking_to_purchase: editThinking,
-              feedback: editFeedback,
-              goods_purchased: editGoodsPurchased
+            ...match,
+            customer: { 
+              ...c, 
+              their_needs: editNeeds.trim(), 
+              thinking_to_purchase: editThinking.trim(),
+              feedback: editFeedback.trim(),
+              goods_purchased: editGoodsPurchased.trim()
             }
           };
         }
-        return m;
+        return match;
       }));
-
-      setStatusMessage("Records synchronized successfully ✅");
+      setStatusMessage("Records synchronized to spreadsheet ledger successfully ✅");
       setIsEditingId(null);
     } catch (error) {
-      setStatusMessage(`Failed to save: ${error.message} ❌`);
+      setStatusMessage(`Failed to save data layout: ${error.message} ❌`);
     } finally {
       setSaving(false);
     }
@@ -705,10 +804,9 @@ function App() {
                     </div>
                   </div>
 
-                  {/* VOICE RECOGNITION PANEL INTEGRATION CONTROL OVERLAY */}
                   <div className="purchased-section" style={{ borderLeft: "4px solid #10b981" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                      <label style={{ margin: 0 }}>Goods Previously Purchased</label>
+                      <label style={{ margin: 0 }}>Goods Purchased (Real-Time Voice Setup)</label>
                       
                       <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                         <select 
@@ -718,14 +816,15 @@ function App() {
                           style={{ padding: "2px 6px", fontSize: "0.75rem", width: "auto", height: "auto" }}
                         >
                           <option value="en-US">🇺🇸 English</option>
-                          <option value="hi-IN">🇮🇳 Hindi</option>
-                          <option value="es-ES">🇪🇸 Spanish</option>
-                          <option value="fr-FR">🇫🇷 French</option>
+                          <option value="hi-IN">🇮🇳 Hindi (हिंदी)</option>
+                          <option value="ne-NP">🇳🇵 Nepali (नेपाली)</option>
+                          <option value="mai-IN">🌾 Maithili (मैथिली)</option>
+                          <option value="bho-IN">🏺 Bhojpuri (भोजपुरी)</option>
                         </select>
 
                         <button 
                           type="button"
-                          onClick={toggleVoiceListening}
+                          onClick={() => toggleVoiceListening(activeCustomer)}
                           className="btn-edit"
                           style={{
                             backgroundColor: isListening ? "#ef4444" : "#10b981",
@@ -737,20 +836,20 @@ function App() {
                             gap: "4px"
                           }}
                         >
-                          {isListening ? "🛑 Stop" : "🎙️ Speak Order"}
+                          {isListening ? "🛑 Stop Mic" : "🎙️ Speak Live"}
                         </button>
                       </div>
                     </div>
                     
                     <div className="goods-box" style={{ fontWeight: "600", color: "#1e293b", minHeight: "18px" }}>
                       {isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) 
-                        ? (editGoodsPurchased || "Empty Buffer Field...") 
-                        : (activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "No prior transactional data recorded")}
+                        ? (editGoodsPurchased || "Listening... Start speaking to write live layout entry") 
+                        : (activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "No transactional data recorded")}
                     </div>
                   </div>
 
                   <hr className="divider" />
-               
+    
                   <div className="insights-section">
                     <div className="insights-header">
                       <h4>Intent Matrix Profile Data</h4>
@@ -768,14 +867,13 @@ function App() {
                       )}
                     </div>
 
-                    {/* MANUAL ACCESSIBLE GOODS PURCHASED ROW FORM INTERACTION */}
                     <div className="input-block">
                       <label>Manual Edit Goods List & Quantities</label>
                       <textarea
                         value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editGoodsPurchased : (activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "")}
                         onChange={(e) => setEditGoodsPurchased(e.target.value)}
                         disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])}
-                        placeholder="Type products or use microphone speech translation tool above..."
+                        placeholder="Click 'Speak Live' above to write instantly via mic..."
                         className="crm-textarea"
                         style={{ borderLeft: "3px solid #10b981" }}
                       />
@@ -808,7 +906,7 @@ function App() {
                         value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editFeedback : (activeCustomer.feedback || activeCustomer["feedback"] || "")}
                         onChange={(e) => setEditFeedback(e.target.value)}
                         disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])}
-                        placeholder="Log personalized interaction summaries, review remarks, or audit notes..."
+                        placeholder="Log personalized interaction summaries..."
                         className="crm-textarea"
                         style={{ borderLeft: "3px solid #4f46e5" }}
                       />
