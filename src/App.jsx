@@ -35,11 +35,11 @@ function App() {
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [failedImages, setFailedImages] = useState({});
   const [faceBoxes, setFaceBoxes] = useState([]);
-
+  
   // Stream Selectors
   const [streamSourceType, setStreamSourceType] = useState("webcam"); 
   const [networkStreamUrl, setNetworkStreamUrl] = useState("");
-
+  
   // Registration Form Context Matrix
   const [regId, setRegId] = useState("");
   const [regName, setRegName] = useState("");
@@ -47,15 +47,21 @@ function App() {
   const [regStatus, setRegStatus] = useState("Lead");
   const [isRegistering, setIsRegistering] = useState(false);
   const [capturedBase64, setCapturedBase64] = useState("");
-
+  
   // CRM Fields Mutation Hooks
   const [isEditingId, setIsEditingId] = useState(null);
   const [editNeeds, setEditNeeds] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editFeedback, setEditFeedback] = useState(""); 
+  const [editGoodsPurchased, setEditGoodsPurchased] = useState(""); // Hooks for editable goods field
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [totalCustomersCount, setTotalCustomersCount] = useState(0);
+
+  // VOICE RECOGNITION STATES
+  const [isListening, setIsListening] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState("en-US"); 
+  const recognitionRef = useRef(null);
 
   // Hardware Ref Targets
   const videoRef = useRef(null);
@@ -84,6 +90,92 @@ function App() {
 
     return () => clearInterval(interval);
   }, [appMode, streamSourceType, networkStreamUrl, isRecognizing, cameraActive]);
+
+  // INITIALIZE MULTI-LANGUAGE SPEECH ENGINE
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false; 
+      recognition.interimResults = false; 
+      
+      recognition.onstart = () => {
+        setIsListening(true);
+        setStatusMessage("🎙️ Listening for orders (Speak product name and quantity)...");
+      };
+
+      recognition.onerror = (event) => {
+        console.error("Speech Recognition Error:", event.error);
+        setStatusMessage(`Speech error encountered: ${event.error} ⚠️`);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        processVoiceOrder(transcript);
+      };
+
+      recognitionRef.current = recognition;
+    } else {
+      console.warn("Web Speech API is not fully supported in this browser wrapper.");
+    }
+  }, [selectedMatchIndex, isEditingId, editGoodsPurchased]);
+
+  // Sync speech engine native locales whenever selected language mutates
+  useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.lang = selectedLanguage;
+    }
+  }, [selectedLanguage]);
+
+  // PARSE MULTI-LANGUAGE TRANSLATION AND FORMAT STRING
+  const processVoiceOrder = (speechText) => {
+    if (!speechText) return;
+    const cleanSpeech = speechText.trim();
+    
+    // If user is currently editing, append directly into the active editing text field buffer state
+    if (isEditingId !== null) {
+      setEditGoodsPurchased(prev => (prev ? `${prev}, ${cleanSpeech}` : cleanSpeech));
+      setStatusMessage(`Added to active edit field: "${cleanSpeech}" 🛒`);
+      return;
+    }
+
+    // Otherwise update the main real-time tracking ledger matrix state
+    setIdentifiedMatches(prev => prev.map((match, idx) => {
+      if (idx === selectedMatchIndex && match.customer) {
+        const c = match.customer;
+        const existingGoods = c.goods_purchased || c["goods_purchased"] || "";
+        const updatedGoods = existingGoods ? `${existingGoods}, ${cleanSpeech}` : cleanSpeech;
+
+        setStatusMessage(`Added to customer card: "${cleanSpeech}" 🛒`);
+        return {
+          ...match,
+          customer: { ...c, goods_purchased: updatedGoods }
+        };
+      }
+      return match;
+    }));
+  };
+
+  const toggleVoiceListening = () => {
+    if (!recognitionRef.current) {
+      setStatusMessage("Speech API error: Browser environment not supported ❌");
+      return;
+    }
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      try {
+        recognitionRef.current.start();
+      } catch (err) {
+        console.error("Speech interaction engine issue:", err);
+      }
+    }
+  };
 
   const startCamera = async () => {
     try {
@@ -191,7 +283,29 @@ function App() {
         };
       });
       setFaceBoxes(trackingBoxes);
-      setIdentifiedMatches(data.matches);
+      
+      setIdentifiedMatches(prev => {
+        return data.matches.map((newMatch, idx) => {
+          if (prev[idx] && prev[idx].customer && newMatch.customer) {
+            const oldId = prev[idx].customer.customer_id || prev[idx].customer["customer_id"];
+            const newId = newMatch.customer.customer_id || newMatch.customer["customer_id"];
+            if (oldId === newId) {
+              const isCurrentlyEditingThisUser = isEditingId === oldId;
+              return {
+                ...newMatch,
+                customer: {
+                  ...newMatch.customer,
+                  goods_purchased: isCurrentlyEditingThisUser ? editGoodsPurchased : prev[idx].customer.goods_purchased,
+                  their_needs: isCurrentlyEditingThisUser ? editNeeds : prev[idx].customer.their_needs,
+                  thinking_to_purchase: isCurrentlyEditingThisUser ? editThinking : prev[idx].customer.thinking_to_purchase,
+                  feedback: isCurrentlyEditingThisUser ? editFeedback : prev[idx].customer.feedback
+                }
+              };
+            }
+          }
+          return newMatch;
+        });
+      });
 
       if (selectedMatchIndex >= data.matches.length) {
         setSelectedMatchIndex(0);
@@ -259,7 +373,6 @@ function App() {
     }
   };
 
-  /* HANDLER RECONFIGURED TO INTERCEPT CORES WITH ENHANCED ACKNOWLEDGEMENT FEEDBACK BACKWARDS COMPATIBILITY */
   const handleRegisterCustomer = async (e) => {
     e.preventDefault();
     if (!capturedBase64) {
@@ -277,35 +390,21 @@ function App() {
         phone: String(regPhone).trim(),
         image: capturedBase64
       };
-
       const response = await fetch(`${API_BASE_URL}/register_customer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       if (!response.ok) {
         throw new Error(`Server connection fault. Core status code: ${response.status}`);
       }
 
       const responseData = await response.json();
-
-      // Explicit verification check validating incoming response headers against v5.0 acknowledgement layer
       if (responseData.error || responseData.success === false) {
-        throw new Error(responseData.message || responseData.error || "Hugging Face layer rejected transaction.");
+        throw new Error(responseData.message || responseData.error || "Backend server rejected transaction.");
       }
 
-      // Check for strict acknowledgement flags returned by the upgraded main.py model
-      if (responseData.acknowledged || responseData.status === "success") {
-        const metadata = responseData.data || {};
-        setStatusMessage(
-          `🎉 Profile Registered Successfully! ID: ${metadata.customer_id || regId} | Dim: [${metadata.vector_dimensions || 512}] • Metrics Initialized!`
-        );
-      } else {
-        setStatusMessage("Profile written to engine, but acknowledgment flag was unallocated ⚠️");
-      }
-
-      // Reset Registration Fields On Success
+      setStatusMessage(`🎉 Profile Registered Successfully! ID: ${regId} Matrix Initialized!`);
       setRegId("");
       setRegName("");
       setRegPhone("");
@@ -329,26 +428,29 @@ function App() {
           id: String(customerId),
           their_needs: editNeeds.trim(),
           thinking_to_purchase: editThinking.trim(),
-          feedback: editFeedback.trim() 
+          feedback: editFeedback.trim(),
+          goods_purchased: editGoodsPurchased.trim() 
         }),
       });
       if (!response.ok) throw new Error(`CRM Mutation Endpoint Error: ${response.status}`);
-      setStatusMessage("Records synchronized successfully ✅");
-      setIdentifiedMatches(prev => prev.map(match => {
-        const c = match.customer;
-        if (c && (c.customer_id || c["customer_id"]) === customerId) {
+      
+      setIdentifiedMatches(prev => prev.map((m, idx) => {
+        if (idx === selectedMatchIndex && m.customer) {
           return {
-            ...match,
-            customer: { 
-              ...c, 
-              their_needs: editNeeds.trim(), 
-              thinking_to_purchase: editThinking.trim(),
-              feedback: editFeedback.trim()
+            ...m,
+            customer: {
+              ...m.customer,
+              their_needs: editNeeds,
+              thinking_to_purchase: editThinking,
+              feedback: editFeedback,
+              goods_purchased: editGoodsPurchased
             }
           };
         }
-        return match;
+        return m;
       }));
+
+      setStatusMessage("Records synchronized successfully ✅");
       setIsEditingId(null);
     } catch (error) {
       setStatusMessage(`Failed to save: ${error.message} ❌`);
@@ -603,10 +705,47 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="purchased-section">
-                    <label>Goods Previously Purchased</label>
-                    <div className="goods-box">
-                      {activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "No prior transactional data recorded"}
+                  {/* VOICE RECOGNITION PANEL INTEGRATION CONTROL OVERLAY */}
+                  <div className="purchased-section" style={{ borderLeft: "4px solid #10b981" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                      <label style={{ margin: 0 }}>Goods Previously Purchased</label>
+                      
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        <select 
+                          value={selectedLanguage} 
+                          onChange={(e) => setSelectedLanguage(e.target.value)}
+                          className="crm-input"
+                          style={{ padding: "2px 6px", fontSize: "0.75rem", width: "auto", height: "auto" }}
+                        >
+                          <option value="en-US">🇺🇸 English</option>
+                          <option value="hi-IN">🇮🇳 Hindi</option>
+                          <option value="es-ES">🇪🇸 Spanish</option>
+                          <option value="fr-FR">🇫🇷 French</option>
+                        </select>
+
+                        <button 
+                          type="button"
+                          onClick={toggleVoiceListening}
+                          className="btn-edit"
+                          style={{
+                            backgroundColor: isListening ? "#ef4444" : "#10b981",
+                            color: "white",
+                            borderColor: "transparent",
+                            padding: "3px 8px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px"
+                          }}
+                        >
+                          {isListening ? "🛑 Stop" : "🎙️ Speak Order"}
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="goods-box" style={{ fontWeight: "600", color: "#1e293b", minHeight: "18px" }}>
+                      {isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) 
+                        ? (editGoodsPurchased || "Empty Buffer Field...") 
+                        : (activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "No prior transactional data recorded")}
                     </div>
                   </div>
 
@@ -622,10 +761,24 @@ function App() {
                           setEditNeeds(activeCustomer.their_needs || activeCustomer["their_needs"] || "");
                           setEditThinking(activeCustomer.thinking_to_purchase || activeCustomer["thinking_to_purchase"] || "");
                           setEditFeedback(activeCustomer.feedback || activeCustomer["feedback"] || ""); 
+                          setEditGoodsPurchased(activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || ""); 
                         }}>✏️ Edit Fields</button>
                       ) : (
                         <button className="btn-cancel" onClick={() => setIsEditingId(null)}>Cancel</button>
                       )}
+                    </div>
+
+                    {/* MANUAL ACCESSIBLE GOODS PURCHASED ROW FORM INTERACTION */}
+                    <div className="input-block">
+                      <label>Manual Edit Goods List & Quantities</label>
+                      <textarea
+                        value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editGoodsPurchased : (activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "")}
+                        onChange={(e) => setEditGoodsPurchased(e.target.value)}
+                        disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])}
+                        placeholder="Type products or use microphone speech translation tool above..."
+                        className="crm-textarea"
+                        style={{ borderLeft: "3px solid #10b981" }}
+                      />
                     </div>
 
                     <div className="input-block">
