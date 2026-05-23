@@ -1,0 +1,99 @@
+.video-section {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 22px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
+}
+
+.video-section-header {
+  margin-bottom: 14px;
+}
+
+.section-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.camera-box {
+  position: relative;
+  overflow: hidden;
+
+  background: #0f172a;
+  border-radius: 12px;
+
+  aspect-ratio: 4/3;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.camera-error-msg {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.spatial-bounding-box {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.identified-edge {
+  border: 3px solid #22c55e;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.4);
+}
+
+.unknown-edge {
+  border: 3px dashed #ef4444;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+}
+
+.bounding-box-label {
+  position: absolute;
+  top: -28px;
+  left: -3px;
+
+  background: #22c55e;
+  color: white;
+
+  padding: 4px 8px;
+  border-radius: 6px 6px 0 0;
+
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.unknown-edge .bounding-box-label {
+  background: #ef4444;
+}
+
+.capture-btn {
+  width: 100%;
+  margin-top: 16px;
+
+  border: none;
+  border-radius: 10px;
+
+  padding: 12px;
+
+  background: #0284c7;
+  color: white;
+
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.25s ease;
+}
+
+.capture-btn:hover {
+  background: #0369a1;
+}

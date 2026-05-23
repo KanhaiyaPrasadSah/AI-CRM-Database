@@ -1,30 +1,83 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
 
+// Updated Web App Backend Space Endpoint Matrix
 const API_BASE_URL = "https://krishnamills-backend-api.hf.space";
 
 /* HIGH-SPEED RELIABLE GOOGLE DRIVE IMAGE STREAM LAYER */
 const getBestImageUrl = (url) => {
   if (!url) return "";
   try {
-    const cleanUrl = url.toString().trim();
+    const cleanUrl = String(url).trim();
+    
+    // base64 image (works always)
     if (cleanUrl.startsWith("data:image")) return cleanUrl;
+
+    // Google Drive file handling
     if (cleanUrl.includes("drive.google.com")) {
-      let fileId = "";
-      if (cleanUrl.includes("/file/d/")) {
-        fileId = cleanUrl.split("/file/d/")[1].split("/")[0];
-      } else if (cleanUrl.includes("id=")) {
-        fileId = cleanUrl.split("id=")[1].split("&")[0];
-      }
-      
+      let fileId = null;
+
+      // /file/d/ format
+      const match1 = cleanUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (match1) fileId = match1[1];
+
+      // ?id= format
+      const match2 = cleanUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (!fileId && match2) fileId = match2[1];
+
       if (fileId) {
-        return `https://lh3.googleusercontent.com/d/$$$$${fileId}`;
+        // FIXED: Using lh3.googleusercontent.com for direct image rendering
+        return `https://lh3.googleusercontent.com/d/${fileId}`;
       }
     }
+
+    // normal image URL
     return cleanUrl;
   } catch (err) {
-    console.error("Image parsing engine fault:", err);
-    return url;
+    console.error("Image parsing error:", err);
+    return "";
+  }
+};
+
+// HELPER TO FORMAT TIMESTAMP AND EXTRACT WEEKDAY STRINGS
+const formatTimestampWithDay = (timestampStr) => {
+  if (!timestampStr) return "N/A";
+  try {
+    // Cross-browser normalization safety for standard strings 'YYYY-MM-DD HH:MM:SS'
+    const cleanTs = timestampStr.toString().split(".")[0].replace("Z", "").replace("T", " ");
+    const dateObj = new Date(cleanTs.replace(/-/g, "/"));
+    
+    if (isNaN(dateObj.getTime())) return timestampStr;
+
+    const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const dayName = daysOfWeek[dateObj.getDay()];
+    
+    return `${dayName}, ${cleanTs}`;
+  } catch (e) {
+    return timestampStr;
+  }
+};
+
+// COMPUTE DAYS INTERVAL FROM DIFFERENCE BETWEEN PAST TIMESTAMP AND CURRENT RUNTIME TIMESTAMP
+const calculateDaysInterval = (pastTimestampStr, currentTimestampStr) => {
+  if (!pastTimestampStr || !currentTimestampStr) return 0;
+  try {
+    const cleanPast = pastTimestampStr.toString().split(".")[0].replace("Z", "").replace("T", " ").replace(/-/g, "/");
+    const cleanCurrent = currentTimestampStr.toString().split(".")[0].replace("Z", "").replace("T", " ").replace(/-/g, "/");
+    
+    const pastDate = new Date(cleanPast);
+    const currentDate = new Date(cleanCurrent);
+    
+    if (isNaN(pastDate.getTime()) || isNaN(currentDate.getTime())) return 0;
+    
+    // Calculate difference in milliseconds
+    const diffTime = Math.abs(currentDate - pastDate);
+    // Convert to whole number days
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  } catch (e) {
+    console.error("Error computing days interval mapping loop:", e);
+    return 0;
   }
 };
 
@@ -69,6 +122,9 @@ function App() {
   const [cameraError, setCameraError] = useState("");
   const lastLoggedTimeRef = useRef({});
 
+  // RUNTIME CLOCK TRACKER STATE MATRIX FOR CURRENT VISITS
+  const [currentTimeStamp, setCurrentTimeStamp] = useState("");
+
   // HIGH-SPEED MUTABLE REFS ENGINE
   const isEditingIdRef = useRef(null);
   const editGoodsPurchasedRef = useRef("");
@@ -84,6 +140,22 @@ function App() {
   useEffect(() => { editThinkingRef.current = editThinking; }, [editThinking]);
   useEffect(() => { editFeedbackRef.current = editFeedback; }, [editFeedback]);
   useEffect(() => { selectedMatchIndexRef.current = selectedMatchIndex; }, [selectedMatchIndex]);
+
+  // Continuously maintain accurate live scanning client-side clock updates
+  useEffect(() => {
+    if (appMode !== "recognition") return;
+    const clockInterval = setInterval(() => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const date = String(now.getDate()).padStart(2, "0");
+      const hours = String(now.getHours()).padStart(2, "0");
+      const mins = String(now.getMinutes()).padStart(2, "0");
+      const secs = String(now.getSeconds()).padStart(2, "0");
+      setCurrentTimeStamp(`${year}-${month}-${date} ${hours}:${mins}:${secs}`);
+    }, 1000);
+    return () => clearInterval(clockInterval);
+  }, [appMode]);
 
   useEffect(() => {
     if (streamSourceType === "webcam") {
@@ -202,7 +274,7 @@ function App() {
         setIsEditingId(cId);
         setEditNeeds(activeCust.their_needs || activeCust["their_needs"] || "");
         setEditThinking(activeCust.thinking_to_purchase || activeCust["thinking_to_purchase"] || "");
-        setEditFeedback(activeCust.feedback || activeCust["feedback"] || ""); 
+        setEditFeedback(activeCust.feedback || activeCust["feedback"] || "");
         setEditGoodsPurchased(activeCust.goods_purchased || activeCust["goods_purchased"] || ""); 
         
         isEditingIdRef.current = cId;
@@ -256,7 +328,6 @@ function App() {
   };
 
   const handleResetUIHistory = () => {
-    // If resetting while someone was being edited, auto-save their data first
     if (isEditingIdRef.current) {
       autoCommitDataOnExit(isEditingIdRef.current);
     }
@@ -313,12 +384,10 @@ function App() {
     }
   };
 
-  // BACKGROUND AUTO-COMMIT DETECTOR BLOCK
   const autoCommitDataOnExit = async (customerId) => {
     if (!customerId) return;
     try {
       console.log(`Auto-saving details for exited customer: ${customerId}`);
-      // Send reference variables directly to prevent grabbing empty states during unmounting/resets
       await fetch(`${API_BASE_URL}/update_customer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -337,7 +406,6 @@ function App() {
   };
 
   const processServerMatches = (data, sourceWidth, sourceHeight) => {
-    // CRITICAL TRIGGER: If active user was being edited, but camera frame returns 0 matches, they left the camera.
     if ((!data.matches || data.matches.length === 0) && isEditingIdRef.current) {
       const exitedId = isEditingIdRef.current;
       setIsEditingId(null);
@@ -350,7 +418,6 @@ function App() {
     }
 
     if (data.matches && data.matches.length > 0) {
-      // Check if the specific user being edited has disappeared from the new array of matches
       if (isEditingIdRef.current) {
         const stillPresent = data.matches.some(m => m.identified && m.customer && (m.customer.customer_id || m.customer["customer_id"]) === isEditingIdRef.current);
         if (!stillPresent) {
@@ -390,7 +457,8 @@ function App() {
                 ...newMatch,
                 customer: {
                   ...newMatch.customer,
-                  goods_purchased: isCurrentlyEditingThisUser ? editGoodsPurchasedRef.current : (newMatch.customer.goods_purchased || prev[idx].customer.goods_purchased),
+                  goods_purchased: isCurrentlyEditingThisUser ? editGoodsPurchasedRef.current 
+                  : (newMatch.customer.goods_purchased || prev[idx].customer.goods_purchased),
                   their_needs: isCurrentlyEditingThisUser ? editNeedsRef.current : (newMatch.customer.their_needs || prev[idx].customer.their_needs),
                   thinking_to_purchase: isCurrentlyEditingThisUser ? editThinkingRef.current : (newMatch.customer.thinking_to_purchase || prev[idx].customer.thinking_to_purchase),
                   feedback: isCurrentlyEditingThisUser ? editFeedbackRef.current : (newMatch.customer.feedback || prev[idx].customer.feedback)
@@ -532,7 +600,6 @@ function App() {
         }),
       });
       if (!response.ok) throw new Error(`CRM Mutation Endpoint Error: ${response.status}`);
-      
       setIdentifiedMatches(prev => prev.map(match => {
         const c = match.customer;
         if (c && (c.customer_id || c["customer_id"]) === customerId) {
@@ -710,13 +777,12 @@ function App() {
                 )}
               </div>
             )}
-
+            
             {appMode === "registration" && (
               <button className="btn-scan capture-snapshot" onClick={captureSnapshotForRegistration} disabled={!cameraActive}>
                 📸 Snap Registration Image
               </button>
             )}
-
             {statusMessage && <p className="crm-status-toast">{statusMessage}</p>}
           </div>
 
@@ -751,17 +817,17 @@ function App() {
                 </div>
               ) : (
                 <div className="profile-card fade-in">
-                  <div className="profile-header">
-                    <div className="img-container">
+                  <div className="profile-header" style={{ display: "flex", alignItems: "flex-start", gap: "14px" }}>
+                    <div className="img-container" style={{ flexShrink: 0 }}>
                       {getBestImageUrl(activeCustomer.face_image_drive_link || activeCustomer["face_image_drive_link"]) && !failedImages[activeCustomer.customer_id || activeCustomer["customer_id"]] ? (
-                        <img
-                          src={getBestImageUrl(activeCustomer.face_image_drive_link || activeCustomer["face_image_drive_link"])}
-                          alt={activeCustomer.customer_name || activeCustomer["customer_name"]}
-                          className="customer-photo"
+                        <img 
+                          src={getBestImageUrl(activeCustomer.face_image_drive_link || activeCustomer["face_image_drive_link"])} 
+                          alt={activeCustomer.customer_name || activeCustomer["customer_name"]} 
+                          className="customer-photo" 
                           onError={() => {
                             const cId = activeCustomer.customer_id || activeCustomer["customer_id"];
                             setFailedImages(prev => ({ ...prev, [cId]: true }));
-                          }}
+                          }} 
                         />
                       ) : (
                         <div className="placeholder-box fallback-link-container">
@@ -779,24 +845,53 @@ function App() {
                       </span>
                     </div>
 
-                    <div className="header-text">
-                      <h3>{activeCustomer.customer_name || activeCustomer["customer_name"]}</h3>
-                      <p className="sub-text">ID: <strong>{activeCustomer.customer_id || activeCustomer["customer_id"]}</strong></p>
-                      <p className="sub-text">Confidence: <strong style={{color: '#4caf50'}}>{Math.round(activeMatch.confidence * 100)}%</strong></p>
-                      <p className="sub-text">Phone: <strong>{activeCustomer.phone_no || activeCustomer["phone_no"] || "N/A"}</strong></p>
+                    <div className="header-text" style={{ flexGrow: 1, display: "flex", justifyContent: "space-between", gap: "10px" }}>
+                      <div className="left-side-format" style={{ flex: "1 1 45%" }}>
+                        <h3 style={{ marginBottom: "4px", fontSize: "1.25rem" }}>{activeCustomer.customer_name || activeCustomer["customer_name"]}</h3>
+                        <p className="sub-text" style={{ margin: "2px 0" }}>ID: <strong>{activeCustomer.customer_id || activeCustomer["customer_id"]}</strong></p>
+                        <p className="sub-text" style={{ margin: "2px 0" }}>Confidence: <strong style={{color: '#4caf50'}}>{Math.round(activeMatch.confidence * 100)}%</strong></p>
+                        <p className="sub-text" style={{ margin: "2px 0" }}>Phone: <strong>{activeCustomer.phone_no || activeCustomer["phone_no"] || "N/A"}</strong></p>
+                      </div>
+
+                      <div className="right-side-format" style={{ flex: "1 1 55%", display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <div style={{ background: "#f0f7ff", padding: "6px 8px", borderRadius: "4px", border: "1px solid #bfdbfe" }}>
+                          <span style={{ display: "block", color: "#1e40af", fontWeight: "700", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.3px" }}>Current Timestamp with Day</span>
+                          <span style={{ color: "#2563eb", fontWeight: "700", fontSize: "0.78rem", display: "block", whiteSpace: "normal" }}>{formatTimestampWithDay(currentTimeStamp)}</span>
+                        </div>
+                        
+                        <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: "4px", border: "1px solid #e2e8f0" }}>
+                          <span style={{ display: "block", color: "#64748b", fontWeight: "700", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.3px" }}>Previous Timestamp with Day</span>
+                          <span style={{ color: "#334155", fontWeight: "600", fontSize: "0.78rem", display: "block", whiteSpace: "normal" }}>
+                            {formatTimestampWithDay(
+                              activeCustomer.timestamp_with_day || 
+                              activeCustomer["timestamp_with_day"] ||
+                              activeCustomer.last_visit_timestamp || 
+                              "N/A"
+                            )}
+                          </span>
+                        </div>
+                        
+                        <div style={{ background: "#fff5f5", padding: "5px 8px", borderRadius: "4px", border: "1px solid #fee2e2", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ color: "#991b1b", fontWeight: "700", fontSize: "0.7rem", textTransform: "uppercase" }}>Days Interval:</span>
+                          <span style={{ color: "#ef4444", fontWeight: "800", fontSize: "0.9rem" }}>
+                            {calculateDaysInterval(
+                              activeCustomer.timestamp_with_day || 
+                              activeCustomer["timestamp_with_day"] ||
+                              activeCustomer.last_visit_timestamp, 
+                              currentTimeStamp
+                            )} Days
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="info-grid">
+                  <div className="info-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)", gap: "12px", marginTop: "15px" }}>
                     <div className="info-item">
-                      <label>Total Visits</label>
+                      <label>Total Visits Today</label>
                       <span className="highlight-blue">
                         {activeCustomer.total_visit_per_day || activeCustomer["total_visit_per_day"] || "1"}
                       </span>
-                    </div>
-                    <div className="info-item">
-                      <label>Days Interval</label>
-                      <span>{activeCustomer.days_interval_visit || activeCustomer["days_interval_visit"] || "0"} Days</span>
                     </div>
                     <div className="info-item">
                       <label>Transaction Limit</label>
@@ -804,147 +899,117 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="purchased-section" style={{ borderLeft: "4px solid #10b981" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                      <label style={{ margin: 0 }}>Goods Purchased (Real-Time Voice Setup)</label>
-                      
-                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                        <select 
-                          value={selectedLanguage} 
-                          onChange={(e) => setSelectedLanguage(e.target.value)}
-                          className="crm-input"
-                          style={{ padding: "2px 6px", fontSize: "0.75rem", width: "auto", height: "auto" }}
-                        >
-                          <option value="en-US">🇺🇸 English</option>
-                          <option value="hi-IN">🇮🇳 Hindi (हिंदी)</option>
-                          <option value="ne-NP">🇳🇵 Nepali (नेपाली)</option>
-                          <option value="mai-IN">🌾 Maithili (मैथिली)</option>
-                          <option value="bho-IN">🏺 Bhojpuri (भोजपुरी)</option>
-                        </select>
+                  <div className="purchased-section" style={{ borderLeft: "4px solid #10b981", marginTop: "15px" }}>
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+    <label style={{ margin: 0 }}>Goods Purchased (Real-Time Voice Setup)</label>
+    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+      <select 
+        value={selectedLanguage} 
+        onChange={(e) => setSelectedLanguage(e.target.value)} 
+        className="crm-input" 
+        style={{ padding: "2px 6px", fontSize: "0.75rem", width: "auto", height: "auto" }}
+      >
+        <option value="en-US">🇺🇸 English</option>
+        <option value="hi-IN">🇮🇳 Hindi (हिंदी)</option>
+        <option value="ne-NP">🇳🇵 Nepali (नेपाली)</option>
+        <option value="mai-IN">🌾 Maithili (मैथिली)</option>
+        <option value="bho-IN">🏺 Bhojpuri (भोजपुरी)</option>
+      </select>
+      <button 
+        type="button" 
+        onClick={() => toggleVoiceListening(activeCustomer)} 
+        className="btn-edit" 
+        style={{ backgroundColor: isListening ? "#ef4444" : "#10b981", color: "white", borderColor: "transparent", padding: "3px 8px", display: "flex", alignItems: "center", gap: "4px" }}
+      >
+        {isListening ? "🛑 Stop Mic" : "🎙️ Speak Live"}
+      </button>
+    </div>
+  </div>
+  
+  {/* Editable Goods Section */}
+  <div className="goods-box" style={{ fontWeight: "600", color: "#1e293b", minHeight: "18px" }}>
+    {isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? (
+      <textarea 
+        className="crm-textarea"
+        value={editGoodsPurchased}
+        onChange={(e) => setEditGoodsPurchased(e.target.value)}
+        style={{ width: "100%", padding: "8px", border: "1px solid #cbd5e1", borderRadius: "4px" }}
+        placeholder="Type here or use voice..."
+      />
+    ) : (
+      activeCustomer.goods_purchased || "No Records Found"
+    )}
+  </div>
+</div>
 
-                        <button 
-                          type="button"
-                          onClick={() => toggleVoiceListening(activeCustomer)}
-                          className="btn-edit"
-                          style={{
-                            backgroundColor: isListening ? "#ef4444" : "#10b981",
-                            color: "white",
-                            borderColor: "transparent",
-                            padding: "3px 8px",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "4px"
-                          }}
-                        >
-                          {isListening ? "🛑 Stop Mic" : "🎙️ Speak Live"}
-                        </button>
-                      </div>
+                  <div className="mutations-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
+                    <div className="input-group-layout">
+                      <label>Current Needs Map</label>
+                      <textarea value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editNeeds : (activeCustomer.their_needs || "")} onChange={(e) => { if (isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"])) { setEditNeeds(e.target.value); } }} disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])} className="crm-textarea" placeholder="N/A" />
                     </div>
-                    
-                    <div className="goods-box" style={{ fontWeight: "600", color: "#1e293b", minHeight: "18px" }}>
-                      {isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) 
-                        ? (editGoodsPurchased || "Listening... Start speaking to write live layout entry") 
-                        : (activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "No transactional data recorded")}
+                    <div className="input-group-layout">
+                      <label>Thinking to Purchase</label>
+                      <textarea value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editThinking : (activeCustomer.thinking_to_purchase || "")} onChange={(e) => { if (isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"])) { setEditThinking(e.target.value); } }} disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])} className="crm-textarea" placeholder="N/A" />
                     </div>
                   </div>
 
-                  <hr className="divider" />
-    
-                  <div className="insights-section">
-                    <div className="insights-header">
-                      <h4>Intent Matrix Profile Data</h4>
-                      {isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"]) ? (
-                        <button className="btn-edit" onClick={() => {
-                          const cId = activeCustomer.customer_id || activeCustomer["customer_id"];
-                          setIsEditingId(cId);
-                          setEditNeeds(activeCustomer.their_needs || activeCustomer["their_needs"] || "");
-                          setEditThinking(activeCustomer.thinking_to_purchase || activeCustomer["thinking_to_purchase"] || "");
-                          setEditFeedback(activeCustomer.feedback || activeCustomer["feedback"] || ""); 
-                          setEditGoodsPurchased(activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || ""); 
-                        }}>✏️ Edit Fields</button>
-                      ) : (
-                        <button className="btn-cancel" onClick={() => setIsEditingId(null)}>Cancel</button>
-                      )}
-                    </div>
+                  <div className="input-group-layout" style={{ marginTop: "12px" }}>
+                    <label>Interaction & Sentiment Feedback</label>
+                    <textarea value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editFeedback : (activeCustomer.feedback || "")} onChange={(e) => { if (isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"])) { setEditFeedback(e.target.value); } }} disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])} className="crm-textarea" placeholder="No feedback logged." />
+                  </div>
 
-                    <div className="input-block">
-                      <label>Manual Edit Goods List & Quantities</label>
-                      <textarea
-                        value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editGoodsPurchased : (activeCustomer.goods_purchased || activeCustomer["goods_purchased"] || "")}
-                        onChange={(e) => setEditGoodsPurchased(e.target.value)}
-                        disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])}
-                        placeholder="Click 'Speak Live' above to write instantly via mic..."
-                        className="crm-textarea"
-                        style={{ borderLeft: "3px solid #10b981" }}
-                      />
-                    </div>
-
-                    <div className="input-block">
-                      <label>Customer Core Needs</label>
-                      <textarea
-                        value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editNeeds : (activeCustomer.their_needs || activeCustomer["their_needs"] || "")}
-                        onChange={(e) => setEditNeeds(e.target.value)}
-                        disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])}
-                        className="crm-textarea"
-                      />
-                    </div>
-
-                    <div className="input-block">
-                      <label>Thinking to Purchase</label>
-                      <input
-                        type="text"
-                        value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editThinking : (activeCustomer.thinking_to_purchase || activeCustomer["thinking_to_purchase"] || "")}
-                        onChange={(e) => setEditThinking(e.target.value)}
-                        disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])}
-                        className="crm-input"
-                      />
-                    </div>
-
-                    <div className="input-block">
-                      <label>Personal Review / Feedback</label>
-                      <textarea
-                        value={isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? editFeedback : (activeCustomer.feedback || activeCustomer["feedback"] || "")}
-                        onChange={(e) => setEditFeedback(e.target.value)}
-                        disabled={isEditingId !== (activeCustomer.customer_id || activeCustomer["customer_id"])}
-                        placeholder="Log personalized interaction summaries..."
-                        className="crm-textarea"
-                        style={{ borderLeft: "3px solid #4f46e5" }}
-                      />
-                    </div>
-
-                    {isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) && (
-                      <button className="save-btn" onClick={() => handleSaveCRMData(activeCustomer.customer_id || activeCustomer["customer_id"])} disabled={saving}>
-                        {saving ? "Syncing Layers..." : "Commit Data Sync"}
+                  <div className="action-buttons-container" style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
+                    {isEditingId === (activeCustomer.customer_id || activeCustomer["customer_id"]) ? (
+                      <>
+                        <button className="save-btn" onClick={() => handleSaveCRMData(activeCustomer.customer_id || activeCustomer["customer_id"])} disabled={saving}>
+                          {saving ? "Synchronizing..." : "💾 Commit Layout Adjustments"}
+                        </button>
+                        <button className="cancel-btn" style={{ background: "#64748b", color: "white", border: "none", padding: "8px 16px", borderRadius: "4px", cursor: "pointer", fontWeight: "600" }} onClick={() => setIsEditingId(null)}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button className="edit-trigger-btn" style={{ background: "#4f46e5", color: "white", border: "none", padding: "10px 20px", borderRadius: "4px", cursor: "pointer", fontWeight: "600", width: "100%" }} onClick={() => {
+                        const cId = activeCustomer.customer_id || activeCustomer["customer_id"];
+                        setIsEditingId(cId);
+                        setEditNeeds(activeCustomer.their_needs || "");
+                        setEditThinking(activeCustomer.thinking_to_purchase || "");
+                        setEditFeedback(activeCustomer.feedback || "");
+                        setEditGoodsPurchased(activeCustomer.goods_purchased || "");
+                      }}>
+                        📝 Modify Profile Fields Manually
                       </button>
                     )}
                   </div>
                 </div>
               )
             ) : (
-              <div className="registration-card fade-in">
-                <h3 className="form-heading">Create New Vector Profile</h3>
-                <p className="form-subtext">Input database field mappings and attach face weights.</p>
-                
-                <form onSubmit={handleRegisterCustomer} className="registration-form">
-                  <div className="form-split">
-                    <div className="input-block">
-                      <label>Customer ID (customer_id) *</label>
-                      <input type="text" required value={regId} onChange={(e) => setRegId(e.target.value)} placeholder="e.g. CUST-9021" className="crm-input" />
+              <div className="profile-card registration-card layout-form-box fade-in">
+                <div className="registration-header-block">
+                  <h2>Register Face Vector Data Node</h2>
+                  <p className="sub-text">Map physical features to standard database profile definitions</p>
+                </div>
+
+                <form onSubmit={handleRegisterCustomer} className="registration-system-form">
+                  <div className="form-row-split">
+                    <div className="input-group-layout">
+                      <label>Target Identifier ID *</label>
+                      <input type="text" required value={regId} onChange={(e) => setRegId(e.target.value)} className="crm-input" placeholder="e.g. KM-2026-89" />
                     </div>
-                    <div className="input-block">
-                      <label>Customer Name *</label>
-                      <input type="text" required value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="Full Name" className="crm-input" />
+                    <div className="input-group-layout">
+                      <label>Full Structural Name *</label>
+                      <input type="text" required value={regName} onChange={(e) => setRegName(e.target.value)} className="crm-input" placeholder="e.g. Rahul Sharma" />
                     </div>
                   </div>
 
-                  <div className="input-block">
-                    <label>Phone Number (phone_no)</label>
-                    <input type="tel" value={regPhone} onChange={(e) => setRegPhone(e.target.value)} placeholder="Contact Details" className="crm-input" />
+                  <div className="input-group-layout">
+                    <label>Active Contact Number</label>
+                    <input type="text" value={regPhone} onChange={(e) => setRegPhone(e.target.value)} className="crm-input" placeholder="e.g. +91 9876543210" />
                   </div>
 
-                  <div className="input-block">
-                    <label>Status Classification</label>
-                    <select value={regStatus} onChange={(e) => setRegStatus(e.target.value)} className="crm-input selection-box">
+                  <div className="input-group-layout">
+                    <label>CRM Funnel Status</label>
+                    <select value={regStatus} onChange={(e) => setRegStatus(e.target.value)} className="crm-input">
                       <option value="Lead">Lead</option>
                       <option value="Active">Active</option>
                       <option value="VIP">VIP</option>
